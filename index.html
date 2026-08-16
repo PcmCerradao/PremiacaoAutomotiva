@@ -448,6 +448,11 @@ function populate(){
       document.getElementById("viewMonth").value = currentMonthIndex;
       renderDashMonthOptions();
       populated = true;
+  } else {
+      // Nas atualizações seguintes (ex: chegada dos dados reais do Firestore após
+      // a renderização inicial com dados de demonstração), reavalia o mês padrão
+      // do filtro do dashboard, desde que o usuário ainda não tenha mexido nele.
+      applyDefaultDashMonthSelection();
   }
   
   updateSupervisorAverages();
@@ -457,11 +462,18 @@ function populate(){
 // ==========================================
 // FILTRO DE MESES DO DASHBOARD (multi-seleção)
 // ==========================================
+let dashFilterUserSet = false; // true assim que o usuário mexer manualmente no filtro
 function renderDashMonthOptions(){
   const box=document.getElementById("dashMonthOptions");
   box.innerHTML = months.map((m,i)=>`<label class="ms-item"><input type="checkbox" class="dashMonthChk" value="${i}" onchange="toggleMonth(${i}, this.checked)"> ${m}</label>`).join("");
+  applyDefaultDashMonthSelection();
+}
+// Seleciona automaticamente apenas o último mês com ao menos um indicador preenchido.
+// Só é aplicado enquanto o usuário não tiver alterado o filtro manualmente, para não
+// sobrescrever uma escolha feita por ele quando novos dados chegarem.
+function applyDefaultDashMonthSelection(){
+  if(dashFilterUserSet) return;
   const withData = monthsWithData();
-  // Filtro padrão: apenas o último mês que tenha ao menos um indicador preenchido
   const lastMonthWithData = withData.length ? [withData[withData.length - 1]] : [currentMonthIndex];
   setMonthsSelection(lastMonthWithData);
 }
@@ -484,10 +496,12 @@ function setMonthsSelection(indices){
   updateDashMonthLabel();
 }
 function toggleAllMonths(checked){
+  dashFilterUserSet = true;
   setMonthsSelection(checked ? months.map((_,i)=>i) : []);
   renderDashboard();
 }
 function toggleMonth(idx, checked){
+  dashFilterUserSet = true;
   const current = getSelectedMonths().slice();
   if(checked){ if(!current.includes(idx)) current.push(idx); }
   else { const pos=current.indexOf(idx); if(pos>-1) current.splice(pos,1); }
