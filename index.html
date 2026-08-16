@@ -461,7 +461,9 @@ function renderDashMonthOptions(){
   const box=document.getElementById("dashMonthOptions");
   box.innerHTML = months.map((m,i)=>`<label class="ms-item"><input type="checkbox" class="dashMonthChk" value="${i}" onchange="toggleMonth(${i}, this.checked)"> ${m}</label>`).join("");
   const withData = monthsWithData();
-  setMonthsSelection(withData.length ? withData : months.map((_,i)=>i));
+  // Filtro padrão: apenas o último mês que tenha ao menos um indicador preenchido
+  const lastMonthWithData = withData.length ? [withData[withData.length - 1]] : [currentMonthIndex];
+  setMonthsSelection(lastMonthWithData);
 }
 // Retorna os índices dos meses que possuem ao menos um indicador preenchido em algum grupo
 function monthsWithData(){
