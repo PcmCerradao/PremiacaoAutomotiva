@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Premiação Automotiva — Online</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%86%3C/text%3E%3C/svg%3E">
 <style>
 :root{--bg:#f4f7f5;--card:#fff;--text:#17221c;--muted:#6c786f;--line:#dfe7e1;--brand:#397437;--brand2:#295327;--gold:#966731;--gold-light:#e1d4c5;--ok:#397437;--warn:#c88a16;--bad:#c94b4b;--shadow:0 10px 30px rgba(20,50,35,.08)}
 *{box-sizing:border-box} body{margin:0;background:var(--bg);font-family:Inter,Segoe UI,Arial,sans-serif;color:var(--text)}
@@ -91,6 +92,7 @@ h1{font-size:27px;margin:0 0 5px}.muted{color:var(--muted)}
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 </head>
 <body>
@@ -181,7 +183,8 @@ h1{font-size:27px;margin:0 0 5px}.muted{color:var(--muted)}
   <div class="toolbar">
     <label>Mês <select id="viewMonth"></select></label>
     <label>Grupo <select id="viewGroup"></select></label>
-    <button class="btn secondary" onclick="window.print()" style="margin-left:auto">🖨️ Exportar PDF</button>
+    <button class="btn secondary" onclick="exportViewToXls()" style="margin-left:auto">📊 Exportar Excel</button>
+    <button class="btn secondary" onclick="window.print()">🖨️ Exportar PDF</button>
   </div>
   <div class="table-wrap"><table class="table"><thead><tr><th>Indicador</th><th>Unid.</th><th>Mínimo</th><th>Meta</th><th>Peso</th><th>Valor do mês</th><th style="text-align:center">Resultado</th><th>Status</th><th>Anexo</th></tr></thead><tbody id="viewBody"></tbody></table></div>
 </section>
@@ -444,7 +447,8 @@ function populate(){
   if(!populated) {
       ["entryMonth","viewMonth"].forEach(id=>document.getElementById(id).innerHTML=months.map((m,i)=>`<option value="${i}">${m}</option>`).join(""));
       const groups=state.groups.map((g,i)=>`<option value="${i}">${g.name}</option>`).join("");
-      ["entryGroup","indicatorGroup","viewGroup"].forEach(id=>document.getElementById(id).innerHTML=groups);
+      ["entryGroup","indicatorGroup"].forEach(id=>document.getElementById(id).innerHTML=groups);
+      document.getElementById("viewGroup").innerHTML = `<option value="-1">— Todos os grupos —</option>` + groups;
       document.getElementById("entryMonth").value = currentMonthIndex;
       document.getElementById("viewMonth").value = currentMonthIndex;
       renderDashMonthOptions();
@@ -635,9 +639,12 @@ function downloadFile(fileId, fileName) {
     });
 }
 
-function renderView(){
-  const mi=+document.getElementById("viewMonth").value, gi=+document.getElementById("viewGroup").value, g=state.groups[gi];
+// Monta as linhas (<tr>) de um único grupo para a tela de Visualizar Lançamentos.
+// Quando showGroupHeader=true, insere uma linha de cabeçalho com o nome do grupo
+// (usado no modo "Todos os grupos").
+function buildGroupViewRows(g, mi, showGroupHeader){
   let totalScore = 0;
+  const headerRow = showGroupHeader ? `<tr style="background:var(--brand2)"><td colspan="9" style="color:#fff; font-weight:800; padding:10px 14px;">${escHtml(g.name)}</td></tr>` : "";
   const rowsHtml = g.rows.map((r,idx)=>{
     const [s,c]=status(r,mi), result=calc(r.rule,r.min,r.meta,r.weight,r.values[mi]), value=num(r.values[mi]);
     totalScore += result;
@@ -651,7 +658,45 @@ function renderView(){
   
   const totalRow = `<tr style="background:#f7faf8"><td colspan="6" style="text-align:right; font-weight:800;">Resultado Total do Grupo:</td><td style="text-align:center; font-weight:800; font-size:15px; color:var(--brand2);">${(totalScore * 100).toLocaleString('pt-BR', {minimumFractionDigits: 0, maximumFractionDigits: 2})}%</td><td colspan="2"></td></tr>`;
   
-  document.getElementById("viewBody").innerHTML = rowsHtml + totalRow;
+  return headerRow + rowsHtml + totalRow;
+}
+
+function renderView(){
+  const mi=+document.getElementById("viewMonth").value, gi=+document.getElementById("viewGroup").value;
+  if(gi === -1){
+    document.getElementById("viewBody").innerHTML = state.groups.map(g=>buildGroupViewRows(g, mi, true)).join("");
+  } else {
+    document.getElementById("viewBody").innerHTML = buildGroupViewRows(state.groups[gi], mi, false);
+  }
+}
+
+// Exporta a visualização atual (respeitando o mês e o grupo/"Todos os grupos"
+// selecionados) para uma planilha .xlsx, com uma aba por grupo.
+function exportViewToXls(){
+  const mi=+document.getElementById("viewMonth").value, gi=+document.getElementById("viewGroup").value;
+  const monthName = months[mi];
+  const groupsToExport = (gi === -1) ? state.groups : [state.groups[gi]];
+
+  const wb = XLSX.utils.book_new();
+  groupsToExport.forEach(g=>{
+    const header = ["Indicador","Descrição","Unidade","Mínimo","Meta","Peso","Valor do mês","Resultado (%)","Status"];
+    let totalScore = 0;
+    const rows = g.rows.map(r=>{
+      const [s]=status(r,mi), result=calc(r.rule,r.min,r.meta,r.weight,r.values[mi]), value=num(r.values[mi]);
+      totalScore += result;
+      const displayValue = value !== null ? (PCT_ROWS.has(Number(r.row)) ? (value * 100).toLocaleString('pt-BR', {maximumFractionDigits: 2}) + "%" : value.toLocaleString("pt-BR", {maximumFractionDigits: 4})) : "—";
+      return [r.indicator, r.description, r.unit, fmt(r.min,r), fmt(r.meta,r), fmtPct(num(r.weight)||0), displayValue, (result*100).toLocaleString('pt-BR',{maximumFractionDigits:2})+"%", s];
+    });
+    rows.push(["","","","","","","Resultado Total do Grupo:", (totalScore*100).toLocaleString('pt-BR',{maximumFractionDigits:2})+"%", ""]);
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    ws["!cols"] = [{wch:32},{wch:40},{wch:8},{wch:10},{wch:10},{wch:8},{wch:14},{wch:14},{wch:14}];
+    // Nome de aba do Excel tem limite de 31 caracteres e não aceita alguns símbolos
+    const sheetName = g.name.replace(/[\\/?*\[\]:]/g,"").slice(0,31) || "Grupo";
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  });
+
+  const fileLabel = (gi === -1) ? "Todos_os_Grupos" : state.groups[gi].name.replace(/[^a-zA-Z0-9]+/g,"_");
+  XLSX.writeFile(wb, `Premiacao_${fileLabel}_${monthName}.xlsx`);
 }
 
 // ==========================================
