@@ -240,6 +240,7 @@ const currentMonthIndex = (new Date().getMonth() + 12 - 3) % 12;
 let state = structuredClone(BASE);
 let dashSelectedMonths = null; // null = todos os meses selecionados
 let populated = false;
+let dashFilterUserSet = false; // true assim que o usuário mexer manualmente no filtro (declarado aqui em cima para estar disponível antes da primeira chamada de populate())
 
 // Preenche a data/hora do relatório no cabeçalho exclusivo de impressão/PDF
 window.addEventListener("beforeprint", () => {
@@ -462,7 +463,6 @@ function populate(){
 // ==========================================
 // FILTRO DE MESES DO DASHBOARD (multi-seleção)
 // ==========================================
-let dashFilterUserSet = false; // true assim que o usuário mexer manualmente no filtro
 function renderDashMonthOptions(){
   const box=document.getElementById("dashMonthOptions");
   box.innerHTML = months.map((m,i)=>`<label class="ms-item"><input type="checkbox" class="dashMonthChk" value="${i}" onchange="toggleMonth(${i}, this.checked)"> ${m}</label>`).join("");
