@@ -182,7 +182,14 @@ h1{font-size:27px;margin:0 0 5px}.muted{color:var(--muted)}
   <h1>Visualizar Lançamentos</h1><div class="muted">Consulte os resultados e baixe os arquivos anexados em nuvem. Apenas leitura.</div>
   <div class="toolbar">
     <label>Mês <select id="viewMonth"></select></label>
-    <label>Grupo <select id="viewGroup"></select></label>
+    <div class="multiselect" id="viewGroupFilter">
+      <button type="button" class="btn secondary" onclick="toggleViewGroupDropdown(event)">🏷️ <span id="viewGroupLabel">Todos os grupos</span> ▾</button>
+      <div class="multiselect-panel" id="viewGroupPanel" style="display:none">
+        <label class="ms-item"><input type="checkbox" id="viewGroupAll" onchange="toggleAllViewGroups(this.checked)"> <b>Selecionar todos</b></label>
+        <hr>
+        <div id="viewGroupOptions"></div>
+      </div>
+    </div>
     <button class="btn secondary" onclick="exportViewToXls()" style="margin-left:auto">📊 Exportar Excel</button>
     <button class="btn secondary" onclick="window.print()">🖨️ Exportar PDF</button>
   </div>
@@ -242,6 +249,7 @@ const currentMonthIndex = (new Date().getMonth() + 12 - 3) % 12;
 
 let state = structuredClone(BASE);
 let dashSelectedMonths = null; // null = todos os meses selecionados
+let viewSelectedGroups = null; // null = todos os grupos selecionados (tela "Visualizar Lançamentos")
 let populated = false;
 let dashFilterUserSet = false; // true assim que o usuário mexer manualmente no filtro (declarado aqui em cima para estar disponível antes da primeira chamada de populate())
 
@@ -448,10 +456,10 @@ function populate(){
       ["entryMonth","viewMonth"].forEach(id=>document.getElementById(id).innerHTML=months.map((m,i)=>`<option value="${i}">${m}</option>`).join(""));
       const groups=state.groups.map((g,i)=>`<option value="${i}">${g.name}</option>`).join("");
       ["entryGroup","indicatorGroup"].forEach(id=>document.getElementById(id).innerHTML=groups);
-      document.getElementById("viewGroup").innerHTML = `<option value="-1">— Todos os grupos —</option>` + groups;
       document.getElementById("entryMonth").value = currentMonthIndex;
       document.getElementById("viewMonth").value = currentMonthIndex;
       renderDashMonthOptions();
+      renderViewGroupOptions();
       populated = true;
   } else {
       // Nas atualizações seguintes (ex: chegada dos dados reais do Firestore após
@@ -525,6 +533,56 @@ function toggleMonthDropdown(e){
   const panel=document.getElementById("dashMonthPanel");
   panel.style.display = panel.style.display==="none" ? "block" : "none";
 }
+
+// ==========================================
+// FILTRO DE GRUPOS (multi-seleção) — tela "Visualizar Lançamentos"
+// ==========================================
+function renderViewGroupOptions(){
+  const box=document.getElementById("viewGroupOptions");
+  box.innerHTML = state.groups.map((g,i)=>`<label class="ms-item"><input type="checkbox" class="viewGroupChk" value="${i}" onchange="toggleViewGroup(${i}, this.checked)"> ${escHtml(g.name)}</label>`).join("");
+  setViewGroupsSelection(state.groups.map((_,i)=>i));
+}
+function getSelectedViewGroups(){
+  return viewSelectedGroups===null ? state.groups.map((_,i)=>i) : viewSelectedGroups;
+}
+function setViewGroupsSelection(indices){
+  document.querySelectorAll(".viewGroupChk").forEach(cb=>{ cb.checked = indices.includes(+cb.value); });
+  document.getElementById("viewGroupAll").checked = indices.length === state.groups.length;
+  viewSelectedGroups = (indices.length === state.groups.length) ? null : indices.slice().sort((a,b)=>a-b);
+  updateViewGroupLabel();
+}
+function toggleAllViewGroups(checked){
+  setViewGroupsSelection(checked ? state.groups.map((_,i)=>i) : []);
+  renderView();
+}
+function toggleViewGroup(idx, checked){
+  const current = getSelectedViewGroups().slice();
+  if(checked){ if(!current.includes(idx)) current.push(idx); }
+  else { const pos=current.indexOf(idx); if(pos>-1) current.splice(pos,1); }
+  setViewGroupsSelection(current);
+  renderView();
+}
+function updateViewGroupLabel(){
+  const sel = getSelectedViewGroups();
+  const label = document.getElementById("viewGroupLabel");
+  if(viewSelectedGroups===null) label.textContent = "Todos os grupos";
+  else if(sel.length===0) label.textContent = "Nenhum grupo selecionado";
+  else if(sel.length===1) label.textContent = state.groups[sel[0]].name;
+  else label.textContent = sel.length+" grupos selecionados";
+}
+function toggleViewGroupDropdown(e){
+  e.stopPropagation();
+  const panel=document.getElementById("viewGroupPanel");
+  panel.style.display = panel.style.display==="none" ? "block" : "none";
+}
+document.addEventListener("click", (e)=>{
+  const panel=document.getElementById("viewGroupPanel");
+  const filterBox=document.getElementById("viewGroupFilter");
+  if(panel && panel.style.display!=="none" && filterBox && !filterBox.contains(e.target)){
+    panel.style.display="none";
+  }
+});
+
 document.addEventListener("click", (e)=>{
   const panel=document.getElementById("dashMonthPanel");
   const filterBox=document.getElementById("dashMonthFilter");
@@ -662,20 +720,24 @@ function buildGroupViewRows(g, mi, showGroupHeader){
 }
 
 function renderView(){
-  const mi=+document.getElementById("viewMonth").value, gi=+document.getElementById("viewGroup").value;
-  if(gi === -1){
-    document.getElementById("viewBody").innerHTML = state.groups.map(g=>buildGroupViewRows(g, mi, true)).join("");
-  } else {
-    document.getElementById("viewBody").innerHTML = buildGroupViewRows(state.groups[gi], mi, false);
+  const mi=+document.getElementById("viewMonth").value;
+  const selectedGroups = getSelectedViewGroups();
+  if(selectedGroups.length === 0){
+    document.getElementById("viewBody").innerHTML = `<tr><td colspan="9" class="muted" style="text-align:center; padding:20px;">Nenhum grupo selecionado</td></tr>`;
+    return;
   }
+  const showHeader = selectedGroups.length > 1;
+  document.getElementById("viewBody").innerHTML = selectedGroups.map(gi=>buildGroupViewRows(state.groups[gi], mi, showHeader)).join("");
 }
 
-// Exporta a visualização atual (respeitando o mês e o grupo/"Todos os grupos"
-// selecionados) para uma planilha .xlsx, com uma aba por grupo.
+// Exporta a visualização atual (respeitando o mês e os grupos selecionados) para
+// uma planilha .xlsx, com uma aba por grupo.
 function exportViewToXls(){
-  const mi=+document.getElementById("viewMonth").value, gi=+document.getElementById("viewGroup").value;
+  const mi=+document.getElementById("viewMonth").value;
   const monthName = months[mi];
-  const groupsToExport = (gi === -1) ? state.groups : [state.groups[gi]];
+  const selectedGroups = getSelectedViewGroups();
+  if(selectedGroups.length === 0){ alert("Selecione ao menos um grupo para exportar."); return; }
+  const groupsToExport = selectedGroups.map(gi=>state.groups[gi]);
 
   const wb = XLSX.utils.book_new();
   groupsToExport.forEach(g=>{
@@ -695,7 +757,7 @@ function exportViewToXls(){
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
   });
 
-  const fileLabel = (gi === -1) ? "Todos_os_Grupos" : state.groups[gi].name.replace(/[^a-zA-Z0-9]+/g,"_");
+  const fileLabel = (selectedGroups.length === state.groups.length) ? "Todos_os_Grupos" : (selectedGroups.length === 1 ? state.groups[selectedGroups[0]].name.replace(/[^a-zA-Z0-9]+/g,"_") : selectedGroups.length + "_Grupos");
   XLSX.writeFile(wb, `Premiacao_${fileLabel}_${monthName}.xlsx`);
 }
 
@@ -882,7 +944,6 @@ function switchView(viewId) {
 }
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>switchView(b.dataset.view));
 document.getElementById("viewMonth").onchange=renderView;
-document.getElementById("viewGroup").onchange=renderView;
 document.getElementById("entryMonth").onchange=renderEntry;
 document.getElementById("entryGroup").onchange=renderEntry;
 document.getElementById("indicatorGroup").onchange=renderIndicators;
